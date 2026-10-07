@@ -4,13 +4,23 @@ const pool = require('./db');
 const redisClient = require('./redisClient');
 const verifySignature = require('./middleware/auth');
 
-// 1. GET BALANCE (Cached via Redis)
+// 1. GET BALANCE (Cached via Redis safely)
 router.get('/balance/:userId', async (req, res) => {
   const { userId } = req.params;
   const cacheKey = `wallet:balance:${userId}`;
 
   try {
-    const cachedBalance = await redisClient.get(cacheKey);
+    let cachedBalance = null;
+
+    // Safely check Redis cache without crashing if Redis fails
+    try {
+      if (redisClient && redisClient.isOpen) {
+        cachedBalance = await redisClient.get(cacheKey);
+      }
+    } catch (redisErr) {
+      console.warn('Redis Cache Read Error:', redisErr.message);
+    }
+
     if (cachedBalance !== null) {
       return res.json({
         status: 'SUCCESS',
@@ -30,7 +40,15 @@ router.get('/balance/:userId', async (req, res) => {
     }
 
     const balance = parseFloat(result.rows[0].balance);
-    await redisClient.setEx(cacheKey, 10, balance.toString());
+
+    // Safely attempt to update Redis cache
+    try {
+      if (redisClient && redisClient.isOpen) {
+        await redisClient.setEx(cacheKey, 10, balance.toString());
+      }
+    } catch (redisErr) {
+      console.warn('Redis Cache Write Error:', redisErr.message);
+    }
 
     res.json({
       status: 'SUCCESS',
@@ -39,22 +57,39 @@ router.get('/balance/:userId', async (req, res) => {
       cached: false
     });
   } catch (err) {
+    console.error('Balance Route DB Error:', err);
     res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
+
+// Helper for safe Redis cache deletion
+const safeDeleteCache = async (userId) => {
+  try {
+    if (redisClient && redisClient.isOpen) {
+      await redisClient.del(`wallet:balance:${userId}`);
+    }
+  } catch (err) {
+    console.warn('Redis Cache Delete Error:', err.message);
+  }
+};
 
 // 2. DEBIT (BET) - Protected by verifySignature
 router.post('/debit', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
 
-  const acquiredLock = await redisClient.set(lockKey, 'LOCKED', {
-    NX: true,
-    EX: 10
-  });
-
-  if (!acquiredLock) {
-    return res.status(409).json({ error: 'Transaction already in progress or processed' });
+  try {
+    if (redisClient && redisClient.isOpen) {
+      const acquiredLock = await redisClient.set(lockKey, 'LOCKED', {
+        NX: true,
+        EX: 10
+      });
+      if (!acquiredLock) {
+        return res.status(409).json({ error: 'Transaction already in progress or processed' });
+      }
+    }
+  } catch (redisErr) {
+    console.warn('Redis Lock Warning:', redisErr.message);
   }
 
   const client = await pool.connect();
@@ -102,7 +137,7 @@ router.post('/debit', verifySignature, async (req, res) => {
     );
 
     await client.query('COMMIT');
-    await redisClient.del(`wallet:balance:${userId}`);
+    await safeDeleteCache(userId);
 
     res.json({
       status: 'SUCCESS',
@@ -122,13 +157,18 @@ router.post('/credit', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
 
-  const acquiredLock = await redisClient.set(lockKey, 'LOCKED', {
-    NX: true,
-    EX: 10
-  });
-
-  if (!acquiredLock) {
-    return res.status(409).json({ error: 'Transaction already in progress or processed' });
+  try {
+    if (redisClient && redisClient.isOpen) {
+      const acquiredLock = await redisClient.set(lockKey, 'LOCKED', {
+        NX: true,
+        EX: 10
+      });
+      if (!acquiredLock) {
+        return res.status(409).json({ error: 'Transaction already in progress or processed' });
+      }
+    }
+  } catch (redisErr) {
+    console.warn('Redis Lock Warning:', redisErr.message);
   }
 
   const client = await pool.connect();
@@ -171,7 +211,7 @@ router.post('/credit', verifySignature, async (req, res) => {
     );
 
     await client.query('COMMIT');
-    await redisClient.del(`wallet:balance:${userId}`);
+    await safeDeleteCache(userId);
 
     res.json({
       status: 'SUCCESS',
@@ -191,13 +231,18 @@ router.post('/rollback', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId, referenceTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
 
-  const acquiredLock = await redisClient.set(lockKey, 'LOCKED', {
-    NX: true,
-    EX: 10
-  });
-
-  if (!acquiredLock) {
-    return res.status(409).json({ error: 'Transaction already in progress or processed' });
+  try {
+    if (redisClient && redisClient.isOpen) {
+      const acquiredLock = await redisClient.set(lockKey, 'LOCKED', {
+        NX: true,
+        EX: 10
+      });
+      if (!acquiredLock) {
+        return res.status(409).json({ error: 'Transaction already in progress or processed' });
+      }
+    }
+  } catch (redisErr) {
+    console.warn('Redis Lock Warning:', redisErr.message);
   }
 
   const client = await pool.connect();
@@ -250,7 +295,7 @@ router.post('/rollback', verifySignature, async (req, res) => {
     );
 
     await client.query('COMMIT');
-    await redisClient.del(`wallet:balance:${userId}`);
+    await safeDeleteCache(userId);
 
     res.json({
       status: 'SUCCESS',
