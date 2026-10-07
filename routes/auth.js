@@ -7,7 +7,6 @@ const pool = require('../db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_123';
 
-// Helper middleware to check validation errors
 const validate = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -20,7 +19,11 @@ const validate = (req, res, next) => {
 router.post(
   '/register',
   [
-    body('userId').trim().notEmpty().isAlphanumeric().withMessage('userId must be alphanumeric'),
+    body('userId')
+      .trim()
+      .notEmpty()
+      .matches(/^[a-zA-Z0-9_-]+$/)
+      .withMessage('userId can only contain letters, numbers, underscores, and hyphens'),
     body('username').trim().notEmpty().isLength({ min: 3 }).withMessage('Username must be at least 3 characters'),
     body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters')
   ],
