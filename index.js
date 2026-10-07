@@ -6,6 +6,7 @@ const authRoutes = require('./routes/auth');
 const gameRoutes = require('./routes/game');
 const paymentRoutes = require('./routes/payment');
 const adminRoutes = require('./routes/admin');
+const { apiLimiter, authLimiter } = require('./middleware/rateLimiter');
 require('dotenv').config();
 
 const app = express();
@@ -13,6 +14,9 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Apply global rate limiting to all requests
+app.use(apiLimiter);
 
 // Root Route
 app.get('/', (req, res) => {
