@@ -7,6 +7,7 @@ const pool = require('../db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_123';
 
+// Middleware to check validation results
 const validate = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
