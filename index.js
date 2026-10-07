@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const pool = require('./db');
 const walletRoutes = require('./wallet');
+const authRoutes = require('./routes/auth');
 require('dotenv').config();
 
 const app = express();
@@ -29,7 +30,8 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Mount Wallet API Routes
+// Mount Routes
+app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 
 // Server Configuration
