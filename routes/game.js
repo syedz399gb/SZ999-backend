@@ -37,7 +37,6 @@ router.post('/launch', async (req, res) => {
   }
 
   try {
-    // Generate a secure random session token
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const sessionKey = `game:session:${sessionToken}`;
 
@@ -48,7 +47,6 @@ router.post('/launch', async (req, res) => {
       createdAt: new Date().toISOString()
     };
 
-    // Store in Redis with a 5-minute expiry
     await setSessionCache(sessionKey, sessionData, 300);
 
     res.json({
@@ -75,14 +73,12 @@ router.post('/authenticate', async (req, res) => {
   const sessionKey = `game:session:${sessionToken}`;
 
   try {
-    // Retrieve session from Redis
     const session = await getSessionCache(sessionKey);
 
     if (!session) {
       return res.status(404).json({ error: 'INVALID_OR_EXPIRED_SESSION' });
     }
 
-    // Query user's wallet balance from DB
     const walletRes = await pool.query(
       'SELECT balance, currency FROM wallets WHERE user_id = $1',
       [session.userId]
@@ -107,4 +103,143 @@ router.post('/authenticate', async (req, res) => {
   }
 });
 
-module.exports = router;
+// 3. PROVIDER CALLBACK: GAME DEBIT (Bet)
+router.post('/debit', async (req, res) => {
+  const { userId, transactionId, amount, gameId } = req.body;
+
+  if (!userId || !transactionId || amount === undefined) {
+    return res.status(400).json({ error: 'INVALID_PAYLOAD' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Idempotency check
+    const existingTx = await client.query('SELECT id FROM transactions WHERE provider_tx_id = $1', [transactionId]);
+    if (existingTx.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'DUPLICATE_TRANSACTION' });
+    }
+
+    // Get and lock wallet
+    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'USER_NOT_FOUND' });
+    }
+
+    const currentBalance = parseFloat(walletRes.rows[0].balance);
+    const debitAmount = parseFloat(amount);
+
+    if (currentBalance < debitAmount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'INSUFFICIENT_FUNDS' });
+    }
+
+    const newBalance = currentBalance - debitAmount;
+    const walletId = walletRes.rows[0].id;
+
+    await client.query('UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2', [newBalance, walletId]);
+    await client.query(
+      `INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'DEBIT', 'SUCCESS')`,
+      [walletId, transactionId, debitAmount]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      status: 'SUCCESS',
+      transactionId,
+      userId,
+      balance: newBalance,
+      currency: 'PKR'
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'DEBIT_FAILED', details: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// 4. PROVIDER CALLBACK: GAME CREDIT (Win)
+router.post('/credit', async (req, res) => {
+  const { userId, transactionId, amount, gameId } = req.body;
+
+  if (!userId || !transactionId || amount === undefined) {
+    return res.status(400).json({ error: 'INVALID_PAYLOAD' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existingTx = await client.query('SELECT id FROM transactions WHERE provider_tx_id = $1', [transactionId]);
+    if (existingTx.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'DUPLICATE_TRANSACTION' });
+    }
+
+    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'USER_NOT_FOUND' });
+    }
+
+    const currentBalance = parseFloat(walletRes.rows[0].balance);
+    const creditAmount = parseFloat(amount);
+    const newBalance = currentBalance + creditAmount;
+    const walletId = walletRes.rows[0].id;
+
+    await client.query('UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2', [newBalance, walletId]);
+    await client.query(
+      `INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'CREDIT', 'SUCCESS')`,
+      [walletId, transactionId, creditAmount]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      status: 'SUCCESS',
+      transactionId,
+      userId,
+      balance: newBalance,
+      currency: 'PKR'
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'CREDIT_FAILED', details: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// 5. PROVIDER CALLBACK: GAME ROLLBACK (Refund/Cancel Bet)
+router.post('/rollback', async (req, res) => {
+  const { userId, originalTransactionId, rollbackTransactionId, amount } = req.body;
+
+  if (!userId || !originalTransactionId || !rollbackTransactionId) {
+    return res.status(400).json({ error: 'INVALID_PAYLOAD' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Idempotency check for rollback transaction
+    const existingRollback = await client.query('SELECT id FROM transactions WHERE provider_tx_id = $1', [rollbackTransactionId]);
+    if (existingRollback.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'DUPLICATE_ROLLBACK_TRANSACTION' });
+    }
+
+    // Verify original transaction exists
+    const origTxRes = await client.query(
+      'SELECT id, amount, type FROM transactions WHERE provider_tx_id = $1',
+      [originalTransactionId]
+    );
+
+    if (origTxRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'ORIGINAL_TRANSACTION
