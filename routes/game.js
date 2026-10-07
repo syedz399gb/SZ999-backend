@@ -115,14 +115,12 @@ router.post('/debit', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Idempotency check
     const existingTx = await client.query('SELECT id FROM transactions WHERE provider_tx_id = $1', [transactionId]);
     if (existingTx.rows.length > 0) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'DUPLICATE_TRANSACTION' });
     }
 
-    // Get and lock wallet
     const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
     if (walletRes.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -142,7 +140,7 @@ router.post('/debit', async (req, res) => {
 
     await client.query('UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2', [newBalance, walletId]);
     await client.query(
-      `INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'DEBIT', 'SUCCESS')`,
+      "INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'DEBIT', 'SUCCESS')",
       [walletId, transactionId, debitAmount]
     );
 
@@ -194,7 +192,7 @@ router.post('/credit', async (req, res) => {
 
     await client.query('UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2', [newBalance, walletId]);
     await client.query(
-      `INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'CREDIT', 'SUCCESS')`,
+      "INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'CREDIT', 'SUCCESS')",
       [walletId, transactionId, creditAmount]
     );
 
@@ -227,14 +225,12 @@ router.post('/rollback', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Idempotency check for rollback transaction
     const existingRollback = await client.query('SELECT id FROM transactions WHERE provider_tx_id = $1', [rollbackTransactionId]);
     if (existingRollback.rows.length > 0) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'DUPLICATE_ROLLBACK_TRANSACTION' });
     }
 
-    // Verify original transaction exists
     const origTxRes = await client.query(
       'SELECT id, amount, type FROM transactions WHERE provider_tx_id = $1',
       [originalTransactionId]
@@ -242,4 +238,44 @@ router.post('/rollback', async (req, res) => {
 
     if (origTxRes.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'ORIGINAL_TRANSACTION
+      return res.status(404).json({ error: 'ORIGINAL_TRANSACTION_NOT_FOUND' });
+    }
+
+    const origTx = origTxRes.rows[0];
+    const refundAmount = amount !== undefined ? parseFloat(amount) : parseFloat(origTx.amount);
+
+    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'USER_NOT_FOUND' });
+    }
+
+    const currentBalance = parseFloat(walletRes.rows[0].balance);
+    const newBalance = currentBalance + refundAmount;
+    const walletId = walletRes.rows[0].id;
+
+    await client.query('UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2', [newBalance, walletId]);
+    await client.query(
+      "INSERT INTO transactions (wallet_id, provider_tx_id, amount, type, status) VALUES ($1, $2, $3, 'ROLLBACK', 'SUCCESS')",
+      [walletId, rollbackTransactionId, refundAmount]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      status: 'SUCCESS',
+      rollbackTransactionId,
+      originalTransactionId,
+      userId,
+      balance: newBalance,
+      currency: 'PKR'
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'ROLLBACK_FAILED', details: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+module.exports = router;
