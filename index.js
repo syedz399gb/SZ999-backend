@@ -4,6 +4,7 @@ const pool = require('./db');
 const walletRoutes = require('./wallet');
 const authRoutes = require('./routes/auth');
 const gameRoutes = require('./routes/game');
+const paymentRoutes = require('./routes/payment');
 require('dotenv').config();
 
 const app = express();
@@ -35,6 +36,7 @@ app.get('/health', async (req, res) => {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/game', gameRoutes);
+app.use('/api/v1/payment', paymentRoutes);
 
 // Server Configuration
 const PORT = process.env.PORT || 10000;
