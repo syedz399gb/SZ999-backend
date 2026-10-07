@@ -90,8 +90,8 @@ router.get('/balance/:userId', async (req, res) => {
   }
 });
 
-// 2. DEBIT (BET) - Middleware verifySignature vorübergehend für Tests entfernt
-router.post('/debit', async (req, res) => {
+// 2. DEBIT (BET)
+router.post('/debit', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
 
@@ -166,8 +166,8 @@ router.post('/debit', async (req, res) => {
   }
 });
 
-// 3. CREDIT (WIN) - Middleware verifySignature vorübergehend für Tests entfernt
-router.post('/credit', async (req, res) => {
+// 3. CREDIT (WIN)
+router.post('/credit', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
 
@@ -237,8 +237,8 @@ router.post('/credit', async (req, res) => {
   }
 });
 
-// 4. ROLLBACK (REFUND) - Middleware verifySignature vorübergehend für Tests entfernt
-router.post('/rollback', async (req, res) => {
+// 4. ROLLBACK (REFUND)
+router.post('/rollback', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId, referenceTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
 
