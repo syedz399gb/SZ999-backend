@@ -3,6 +3,7 @@ const cors = require('cors');
 const pool = require('./db');
 const walletRoutes = require('./wallet');
 const authRoutes = require('./routes/auth');
+const gameRoutes = require('./routes/game');
 require('dotenv').config();
 
 const app = express();
@@ -30,9 +31,10 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Mount Routes
+// Mount API Routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/wallet', walletRoutes);
+app.use('/api/v1/game', gameRoutes);
 
 // Server Configuration
 const PORT = process.env.PORT || 10000;
