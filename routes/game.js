@@ -4,26 +4,43 @@ const crypto = require('crypto');
 const pool = require('../db');
 const redisClient = require('../redisClient');
 
-// Helper to store session in Redis
+// In-memory fallback session store when Redis is offline
+const memorySessionStore = new Map();
+
+// Helper to store session in Redis (consistently using string keys)
 const setSessionCache = async (key, value, ttlSeconds = 300) => {
+  const strKey = String(key);
   try {
     if (redisClient && (redisClient.isOpen || redisClient.isReady)) {
-      await redisClient.setEx(key, ttlSeconds, JSON.stringify(value));
+      await redisClient.setEx(strKey, ttlSeconds, JSON.stringify(value));
+      return;
     }
   } catch (err) {
     console.warn('Redis Session Write Warning:', err.message);
   }
+  memorySessionStore.set(strKey, {
+    value,
+    expiresAt: Date.now() + ttlSeconds * 1000
+  });
 };
 
-// Helper to read session from Redis
+// Helper to read session from Redis (consistently using string keys)
 const getSessionCache = async (key) => {
+  const strKey = String(key);
   try {
     if (redisClient && (redisClient.isOpen || redisClient.isReady)) {
-      const data = await redisClient.get(key);
-      return data ? JSON.parse(data) : null;
+      const data = await redisClient.get(strKey);
+      if (data) return JSON.parse(data);
     }
   } catch (err) {
     console.warn('Redis Session Read Warning:', err.message);
+  }
+  const cached = memorySessionStore.get(strKey);
+  if (cached) {
+    if (Date.now() <= cached.expiresAt) {
+      return cached.value;
+    }
+    memorySessionStore.delete(strKey);
   }
   return null;
 };
@@ -81,7 +98,7 @@ router.post('/authenticate', async (req, res) => {
 
     const walletRes = await pool.query(
       'SELECT balance, currency FROM wallets WHERE user_id = $1',
-      [session.userId]
+      [String(session.userId)]
     );
 
     if (walletRes.rows.length === 0) {
@@ -121,7 +138,7 @@ router.post('/debit', async (req, res) => {
       return res.status(409).json({ error: 'DUPLICATE_TRANSACTION' });
     }
 
-    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [String(userId)]);
     if (walletRes.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'USER_NOT_FOUND' });
@@ -179,7 +196,7 @@ router.post('/credit', async (req, res) => {
       return res.status(409).json({ error: 'DUPLICATE_TRANSACTION' });
     }
 
-    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [String(userId)]);
     if (walletRes.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'USER_NOT_FOUND' });
@@ -244,7 +261,7 @@ router.post('/rollback', async (req, res) => {
     const origTx = origTxRes.rows[0];
     const refundAmount = amount !== undefined ? parseFloat(amount) : parseFloat(origTx.amount);
 
-    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    const walletRes = await client.query('SELECT id, balance FROM wallets WHERE user_id = $1 FOR UPDATE', [String(userId)]);
     if (walletRes.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'USER_NOT_FOUND' });

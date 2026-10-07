@@ -4,7 +4,7 @@ require('dotenv').config();
 const poolConfig = process.env.DATABASE_URL
   ? {
       connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'development' ? false : { rejectUnauthorized: false }
+      ssl: process.env.NODE_ENV === 'development' || process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false }
     }
   : {
       user: process.env.DB_USER,
@@ -12,7 +12,7 @@ const poolConfig = process.env.DATABASE_URL
       database: process.env.DB_NAME,
       password: process.env.DB_PASSWORD,
       port: process.env.DB_PORT,
-      ssl: { rejectUnauthorized: false }
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
     };
 
 const pool = new Pool(poolConfig);
@@ -24,6 +24,7 @@ const initDb = async () => {
       id SERIAL PRIMARY KEY,
       user_id VARCHAR(255) UNIQUE NOT NULL,
       username VARCHAR(255) UNIQUE NOT NULL,
+      email VARCHAR(100) UNIQUE,
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -31,7 +32,7 @@ const initDb = async () => {
     CREATE TABLE IF NOT EXISTS wallets (
       id SERIAL PRIMARY KEY,
       user_id VARCHAR(255) UNIQUE NOT NULL,
-      balance NUMERIC(15, 2) NOT NULL DEFAULT 0.00,
+      balance NUMERIC(15, 2) NOT NULL DEFAULT 0.00 CHECK (balance >= 0),
       currency VARCHAR(10) NOT NULL DEFAULT 'PKR',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -47,7 +48,13 @@ const initDb = async () => {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- Seed default test user wallet if missing
+    CREATE INDEX IF NOT EXISTS idx_transactions_wallet_id ON transactions(wallet_id);
+
+    -- Seed test user records if missing
+    INSERT INTO wallets (user_id, balance, currency)
+    VALUES ('1', 1000.00, 'PKR')
+    ON CONFLICT (user_id) DO UPDATE SET balance = 1000.00;
+
     INSERT INTO wallets (user_id, balance, currency)
     VALUES ('test_user_1', 1000.00, 'PKR')
     ON CONFLICT (user_id) DO NOTHING;
@@ -55,7 +62,7 @@ const initDb = async () => {
 
   try {
     await pool.query(queryText);
-    console.log('Database tables verified and test_user_1 seeded successfully.');
+    console.log('Database tables verified and test user 1 seeded successfully.');
   } catch (err) {
     console.error('Error initializing database tables:', err.message);
   }

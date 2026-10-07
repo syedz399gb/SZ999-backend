@@ -1,15 +1,23 @@
 const redis = require('redis');
 require('dotenv').config();
 
+const redisUrl = process.env.REDIS_URL || `redis://${process.env.REDIS_HOST || '127.0.0.1'}:${process.env.REDIS_PORT || 6379}`;
+
 const client = redis.createClient({
-    url: process.env.REDIS_URL
+    url: redisUrl
 });
 
-client.on('error', (err) => console.error('Redis Client Error:', err));
+client.on('error', (err) => console.warn('Redis Client Warning:', err.message));
 client.on('connect', () => console.log('Redis Cache/Lock Engine Connected!'));
 
 (async () => {
-    await client.connect();
+    try {
+        if (!client.isOpen) {
+            await client.connect();
+        }
+    } catch (err) {
+        console.warn('Redis connection failed on startup (falling back to memory/database):', err.message);
+    }
 })();
 
 module.exports = client;

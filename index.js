@@ -12,6 +12,9 @@ require('dotenv').config();
 
 const app = express();
 
+// Trust reverse proxy (e.g. Render, NGINX) for accurate client IP in express-rate-limit
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
 app.use(apiLimiter);
