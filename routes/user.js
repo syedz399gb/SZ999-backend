@@ -3,10 +3,10 @@ const router = express.Router();
 const verifyJwt = require('../middleware/verifyJwt');
 const pool = require('../db');
 
-// Protect all user routes
+// Protect user profile routes with JWT
 router.use(verifyJwt);
 
-// GET /api/v1/user/profile -> Logged-in user profile & balance
+// GET /api/v1/user/profile -> Fetch logged-in user profile & wallet balance
 router.get('/profile', async (req, res) => {
   const userId = req.user.userId;
 
@@ -14,7 +14,7 @@ router.get('/profile', async (req, res) => {
     const result = await pool.query(
       `SELECT u.user_id, u.username, u.created_at, w.balance, w.currency
        FROM users u
-       JOIN wallets w ON u.user_id = w.user_id
+       LEFT JOIN wallets w ON u.user_id = w.user_id
        WHERE u.user_id = $1`,
       [userId]
     );

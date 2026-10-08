@@ -4,7 +4,6 @@ const pool = require('./db');
 const redisClient = require('./redisClient');
 const verifySignature = require('./middleware/auth');
 
-// Safe Redis cache wrapper
 const getFromCache = async (key) => {
   try {
     if (redisClient && (redisClient.isOpen || redisClient.isReady)) {
@@ -36,13 +35,12 @@ const deleteFromCache = async (key) => {
   }
 };
 
-// 1. GET BALANCE
+// 1. GET BALANCE (Game Provider Call)
 router.get('/balance/:userId', async (req, res) => {
   const { userId } = req.params;
   const cacheKey = `wallet:balance:${userId}`;
 
   try {
-    // 1. Try Redis
     const cachedBalance = await getFromCache(cacheKey);
     if (cachedBalance !== null) {
       return res.json({
@@ -53,24 +51,18 @@ router.get('/balance/:userId', async (req, res) => {
       });
     }
 
-    // 2. Query Database
     const result = await pool.query(
       'SELECT balance, currency FROM wallets WHERE user_id = $1',
       [userId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        status: 'ERROR',
-        error: 'Wallet not found',
-        userId
-      });
+      return res.status(404).json({ status: 'ERROR', error: 'Wallet not found', userId });
     }
 
     const balance = parseFloat(result.rows[0].balance);
     const currency = result.rows[0].currency || 'PKR';
 
-    // 3. Save to Redis
     await setToCache(cacheKey, balance, 10);
 
     return res.json({
@@ -81,16 +73,11 @@ router.get('/balance/:userId', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Balance Endpoint Error:', err);
-    return res.status(500).json({
-      status: 'ERROR',
-      error: err.message,
-      detail: 'Error querying balance from database'
-    });
+    return res.status(500).json({ status: 'ERROR', error: err.message });
   }
 });
 
-// 2. DEBIT (BET)
+// 2. GAME DEBIT (BET)
 router.post('/debit', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
@@ -153,11 +140,7 @@ router.post('/debit', verifySignature, async (req, res) => {
     await client.query('COMMIT');
     await deleteFromCache(`wallet:balance:${userId}`);
 
-    res.json({
-      status: 'SUCCESS',
-      balance: newBalance,
-      txId: providerTxId
-    });
+    res.json({ status: 'SUCCESS', balance: newBalance, txId: providerTxId });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Transaction failed', details: err.message });
@@ -166,7 +149,7 @@ router.post('/debit', verifySignature, async (req, res) => {
   }
 });
 
-// 3. CREDIT (WIN)
+// 3. GAME CREDIT (WIN)
 router.post('/credit', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
@@ -224,11 +207,7 @@ router.post('/credit', verifySignature, async (req, res) => {
     await client.query('COMMIT');
     await deleteFromCache(`wallet:balance:${userId}`);
 
-    res.json({
-      status: 'SUCCESS',
-      balance: newBalance,
-      txId: providerTxId
-    });
+    res.json({ status: 'SUCCESS', balance: newBalance, txId: providerTxId });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Transaction failed', details: err.message });
@@ -237,7 +216,7 @@ router.post('/credit', verifySignature, async (req, res) => {
   }
 });
 
-// 4. ROLLBACK (REFUND)
+// 4. GAME ROLLBACK (REFUND)
 router.post('/rollback', verifySignature, async (req, res) => {
   const { userId, amount, providerTxId, referenceTxId } = req.body;
   const lockKey = `lock:tx:${providerTxId}`;
@@ -305,11 +284,7 @@ router.post('/rollback', verifySignature, async (req, res) => {
     await client.query('COMMIT');
     await deleteFromCache(`wallet:balance:${userId}`);
 
-    res.json({
-      status: 'SUCCESS',
-      balance: newBalance,
-      txId: providerTxId
-    });
+    res.json({ status: 'SUCCESS', balance: newBalance, txId: providerTxId });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: 'Rollback failed', details: err.message });
